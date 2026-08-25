@@ -15,6 +15,10 @@ from deeplabcut.core.engine import Engine
 from deeplabcut.pose_estimation_pytorch import available_models
 from deeplabcut.utils import auxiliaryfunctions
 
+from deeplabcut.generate_training_dataset.trainingsetmanipulation import (
+    merge_annotateddatasets,
+)
+
 
 # ============================================================
 # ENVIRONMENT VARIABLE HELPERS
@@ -38,24 +42,6 @@ def env_int(name, default):
     return int(value)
 
 
-def env_float(name, default):
-    value = os.environ.get(name)
-
-    if value is None or value.strip() == "":
-        return default
-
-    return float(value)
-
-
-def env_optional_int(name):
-    value = os.environ.get(name)
-
-    if value is None or value.strip() == "":
-        return None
-
-    return int(value)
-
-
 def env_optional_float(name):
     value = os.environ.get(name)
 
@@ -65,26 +51,15 @@ def env_optional_float(name):
     return float(value)
 
 
-def env_optional_str(name):
-    value = os.environ.get(name)
-
-    if value is None or value.strip() == "":
-        return None
-
-    return value.strip()
-
-
 # ============================================================
 # PENNSIEVE-CONTROLLED PARAMETERS
 # ============================================================
 
-# Network architecture
 NET_TYPE = env_str(
     "NET_TYPE",
     "hrnet_w32"
 )
 
-# Pose training
 EPOCHS = env_int(
     "EPOCHS",
     200
@@ -110,23 +85,11 @@ DISPLAY_ITERS = env_int(
     100
 )
 
-# DLC dataset / shuffle
 SHUFFLE = env_int(
     "SHUFFLE",
     1
 )
 
-TRAININGSET_INDEX = env_int(
-    "TRAININGSET_INDEX",
-    0
-)
-
-TRAIN_FRACTION = env_float(
-    "TRAIN_FRACTION",
-    0.95
-)
-
-# Runtime
 DEVICE = env_str(
     "DEVICE",
     "cuda:0"
@@ -138,34 +101,12 @@ SEED = env_int(
 )
 
 # Optional optimizer overrides
-#
-# Leave blank in Pennsieve to use DLC defaults.
 LEARNING_RATE = env_optional_float(
     "LEARNING_RATE"
 )
 
 WEIGHT_DECAY = env_optional_float(
     "WEIGHT_DECAY"
-)
-
-# Optional top-down detector parameters
-#
-# These are ignored for normal bottom-up HRNet-W32 unless
-# a detector-based architecture is selected.
-DETECTOR_TYPE = env_optional_str(
-    "DETECTOR_TYPE"
-)
-
-DETECTOR_BATCH_SIZE = env_optional_int(
-    "DETECTOR_BATCH_SIZE"
-)
-
-DETECTOR_EPOCHS = env_optional_int(
-    "DETECTOR_EPOCHS"
-)
-
-DETECTOR_SAVE_EPOCHS = env_optional_int(
-    "DETECTOR_SAVE_EPOCHS"
 )
 
 
@@ -193,131 +134,89 @@ OUTPUT_DIR = Path(
 # ============================================================
 
 def log(message=""):
-    print(
-        message,
-        flush=True
-    )
+    print(message, flush=True)
 
 
 # ============================================================
-# VALIDATION
+# VALIDATE PARAMETERS
 # ============================================================
 
 def validate_parameters():
 
     if EPOCHS <= 0:
-        raise ValueError(
-            "EPOCHS must be > 0."
-        )
+        raise ValueError("EPOCHS must be > 0.")
 
     if BATCH_SIZE <= 0:
-        raise ValueError(
-            "BATCH_SIZE must be > 0."
-        )
+        raise ValueError("BATCH_SIZE must be > 0.")
 
     if SAVE_EPOCHS <= 0:
-        raise ValueError(
-            "SAVE_EPOCHS must be > 0."
-        )
+        raise ValueError("SAVE_EPOCHS must be > 0.")
 
     if MAX_SNAPSHOTS <= 0:
-        raise ValueError(
-            "MAX_SNAPSHOTS must be > 0."
-        )
+        raise ValueError("MAX_SNAPSHOTS must be > 0.")
+
+    if DISPLAY_ITERS <= 0:
+        raise ValueError("DISPLAY_ITERS must be > 0.")
 
     if SHUFFLE <= 0:
-        raise ValueError(
-            "SHUFFLE must be >= 1."
-        )
+        raise ValueError("SHUFFLE must be >= 1.")
 
-    if TRAININGSET_INDEX < 0:
-        raise ValueError(
-            "TRAININGSET_INDEX must be >= 0."
-        )
-
-    if not 0 < TRAIN_FRACTION < 1:
-        raise ValueError(
-            "TRAIN_FRACTION must be between 0 and 1."
-        )
-
-    models = list(
-        available_models()
-    )
+    models = list(available_models())
 
     if NET_TYPE not in models:
-
         raise ValueError(
-            f"Unsupported PyTorch DLC model: {NET_TYPE}\n\n"
+            f"Unsupported DLC PyTorch model: {NET_TYPE}\n\n"
             f"Available models:\n"
             + "\n".join(models)
         )
 
 
 # ============================================================
-# RANDOM SEEDS
+# REPRODUCIBILITY
 # ============================================================
 
 def set_random_seeds():
 
-    random.seed(
-        SEED
-    )
+    random.seed(SEED)
 
-    np.random.seed(
-        SEED
-    )
+    np.random.seed(SEED)
 
-    torch.manual_seed(
-        SEED
-    )
+    torch.manual_seed(SEED)
 
     if torch.cuda.is_available():
-
-        torch.cuda.manual_seed_all(
-            SEED
-        )
+        torch.cuda.manual_seed_all(SEED)
 
 
 # ============================================================
-# FIND DLC PROJECT
+# FIND CONFIG
 # ============================================================
 
 def find_config(root):
 
     configs = list(
-        root.rglob(
-            "config.yaml"
-        )
+        root.rglob("config.yaml")
     )
 
     if len(configs) == 0:
-
         raise FileNotFoundError(
-            "No DeepLabCut config.yaml found under:\n"
-            f"{root}"
+            f"No config.yaml found under:\n{root}"
         )
 
     if len(configs) > 1:
-
         raise RuntimeError(
             "More than one config.yaml was found.\n"
-            "This processor expects exactly one DLC project.\n\n"
-            + "\n".join(
-                str(x)
-                for x in configs
-            )
+            "This processor expects exactly one DLC project:\n\n"
+            + "\n".join(str(x) for x in configs)
         )
 
     return configs[0]
 
 
 # ============================================================
-# VERIFY PROJECT
+# VALIDATE LABELED DATA
 # ============================================================
 
-def validate_project(
-    config_path
-):
+def validate_labeled_data(config_path):
 
     cfg = auxiliaryfunctions.read_config(
         str(config_path)
@@ -335,43 +234,195 @@ def validate_project(
     )
 
     if not labeled_root.is_dir():
-
         raise RuntimeError(
-            "No labeled-data directory found:\n"
-            f"{labeled_root}"
+            f"Missing labeled-data directory:\n{labeled_root}"
         )
 
-    annotation_files = list(
+    h5_files = sorted(
         labeled_root.rglob(
             f"CollectedData_{scorer}.h5"
         )
     )
 
-    if len(annotation_files) == 0:
-
+    if not h5_files:
         raise RuntimeError(
-            "No DLC annotation H5 files found under:\n"
-            f"{labeled_root}\n\n"
-            f"Expected files named "
-            f"CollectedData_{scorer}.h5"
+            f"No CollectedData_{scorer}.h5 files found."
         )
 
-    log(
-        f"Found {len(annotation_files)} "
-        "DLC annotation file(s):"
-    )
+    log("Annotation files:")
 
-    for f in annotation_files:
+    for file in h5_files:
+        log(f"  {file}")
 
-        log(
-            f"  {f}"
+    # --------------------------------------------------------
+    # Protect EMBER test data from leakage
+    # --------------------------------------------------------
+
+    test_files = [
+        f
+        for f in h5_files
+        if f.parent.name.lower().endswith("_test")
+    ]
+
+    if test_files:
+        raise RuntimeError(
+            "TEST DATA FOUND IN TRAINING PROJECT.\n\n"
+            "The DLC training container must receive only "
+            "EMBER train and val data.\n\n"
+            + "\n".join(str(f) for f in test_files)
         )
 
     return cfg
 
 
 # ============================================================
-# SAVE RUN INFORMATION
+# CREATE THE FIXED EMBER TRAIN / VAL SPLIT
+# ============================================================
+
+def build_fixed_split(config_path):
+
+    """
+    Merge DLC annotation files using DLC's own merging logic,
+    then assign indices according to the EMBER folder names:
+
+        *_train -> training
+        *_val   -> validation
+
+    No random splitting occurs.
+    """
+
+    cfg = auxiliaryfunctions.read_config(
+        str(config_path)
+    )
+
+    project_path = Path(
+        cfg["project_path"]
+    )
+
+    training_set_folder = (
+        project_path
+        / auxiliaryfunctions.get_training_set_folder(cfg)
+    )
+
+    training_set_folder.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # DLC merges in the same ordering it will use later when
+    # creating the actual training dataset.
+    data = merge_annotateddatasets(
+        cfg,
+        training_set_folder
+    )
+
+    if data is None:
+        raise RuntimeError(
+            "DeepLabCut could not merge the labeled datasets."
+        )
+
+    if len(data) == 0:
+        raise RuntimeError(
+            "Merged DLC annotation dataset is empty."
+        )
+
+    train_indices = []
+    val_indices = []
+
+    unknown_folders = set()
+
+    for index, row_index in enumerate(data.index):
+
+        # DLC image index should look like:
+        #
+        # ("labeled-data", "mice_hc_train", "img....png")
+        #
+        if isinstance(row_index, tuple):
+            folder_name = str(row_index[1])
+        else:
+            parts = Path(str(row_index)).parts
+
+            if len(parts) < 2:
+                raise RuntimeError(
+                    f"Unexpected DLC row index: {row_index}"
+                )
+
+            folder_name = parts[-2]
+
+        folder_lower = folder_name.lower()
+
+        if folder_lower.endswith("_train"):
+
+            train_indices.append(index)
+
+        elif folder_lower.endswith("_val"):
+
+            val_indices.append(index)
+
+        elif folder_lower.endswith("_test"):
+
+            raise RuntimeError(
+                "Test data entered the merged DLC dataset:\n"
+                f"{folder_name}"
+            )
+
+        else:
+
+            unknown_folders.add(folder_name)
+
+    if unknown_folders:
+        raise RuntimeError(
+            "Could not determine train/val membership for these "
+            "labeled-data folders:\n\n"
+            + "\n".join(sorted(unknown_folders))
+            + "\n\nFolder names must end in _train or _val."
+        )
+
+    if len(train_indices) == 0:
+        raise RuntimeError(
+            "No *_train samples were found."
+        )
+
+    if len(val_indices) == 0:
+        raise RuntimeError(
+            "No *_val samples were found."
+        )
+
+    total = (
+        len(train_indices)
+        + len(val_indices)
+    )
+
+    fixed_fraction = round(
+        len(train_indices) / total,
+        2
+    )
+
+    log()
+    log("Fixed EMBER split:")
+    log(
+        f"  Training images:   {len(train_indices)}"
+    )
+    log(
+        f"  Validation images: {len(val_indices)}"
+    )
+    log(
+        f"  Total:             {total}"
+    )
+    log()
+    log(
+        "No random train/validation split will be created."
+    )
+
+    return (
+        train_indices,
+        val_indices,
+        fixed_fraction,
+    )
+
+
+# ============================================================
+# RUN METADATA
 # ============================================================
 
 def write_run_info(
@@ -384,77 +435,51 @@ def write_run_info(
         exist_ok=True
     )
 
-    information = {
+    info = {
         "status": status,
         "time": datetime.now().isoformat(),
-        "deeplabcut_version":
-            getattr(
-                deeplabcut,
-                "__version__",
-                "unknown"
-            ),
-        "torch_version":
-            torch.__version__,
-        "network":
-            NET_TYPE,
-        "epochs":
-            EPOCHS,
-        "batch_size":
-            BATCH_SIZE,
-        "save_epochs":
-            SAVE_EPOCHS,
-        "max_snapshots":
-            MAX_SNAPSHOTS,
-        "display_iters":
-            DISPLAY_ITERS,
-        "shuffle":
-            SHUFFLE,
-        "trainingset_index":
-            TRAININGSET_INDEX,
-        "training_fraction":
-            TRAIN_FRACTION,
-        "device":
-            DEVICE,
-        "seed":
-            SEED,
-        "learning_rate":
-            LEARNING_RATE,
-        "weight_decay":
-            WEIGHT_DECAY,
-        "detector_type":
-            DETECTOR_TYPE,
-        "detector_batch_size":
-            DETECTOR_BATCH_SIZE,
-        "detector_epochs":
-            DETECTOR_EPOCHS,
-        "detector_save_epochs":
-            DETECTOR_SAVE_EPOCHS,
+        "deeplabcut_version": getattr(
+            deeplabcut,
+            "__version__",
+            "unknown"
+        ),
+        "torch_version": torch.__version__,
+        "net_type": NET_TYPE,
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "save_epochs": SAVE_EPOCHS,
+        "max_snapshots": MAX_SNAPSHOTS,
+        "display_iters": DISPLAY_ITERS,
+        "shuffle": SHUFFLE,
+        "device": DEVICE,
+        "seed": SEED,
+        "learning_rate": LEARNING_RATE,
+        "weight_decay": WEIGHT_DECAY,
+        "split_policy": (
+            "Predefined EMBER train/val split; "
+            "EMBER test excluded"
+        ),
     }
 
     if torch.cuda.is_available():
 
-        information[
-            "gpu"
-        ] = torch.cuda.get_device_name(0)
-
-        information[
-            "cuda_version"
-        ] = torch.version.cuda
-
-    if extra is not None:
-
-        information.update(
-            extra
+        info["gpu"] = (
+            torch.cuda.get_device_name(0)
         )
 
-    run_file = (
+        info["cuda_version"] = (
+            torch.version.cuda
+        )
+
+    if extra:
+        info.update(extra)
+
+    (
         OUTPUT_DIR
         / "dlc_training_run.json"
-    )
-
-    run_file.write_text(
+    ).write_text(
         json.dumps(
-            information,
+            info,
             indent=2
         ),
         encoding="utf-8"
@@ -462,7 +487,7 @@ def write_run_info(
 
 
 # ============================================================
-# BUILD PYTORCH CONFIG OVERRIDES
+# OPTIONAL PYTORCH OVERRIDES
 # ============================================================
 
 def build_pytorch_updates():
@@ -481,10 +506,7 @@ def build_pytorch_updates():
             "runner.optimizer.params.weight_decay"
         ] = WEIGHT_DECAY
 
-    if len(updates) == 0:
-        return None
-
-    return updates
+    return updates or None
 
 
 # ============================================================
@@ -496,28 +518,21 @@ def main():
     log(
         "=============================================="
     )
-
     log(
         "EMBER DeepLabCut Training Processor"
     )
-
     log(
         "=============================================="
     )
-
     log()
-
-    # ========================================================
-    # VALIDATE PARAMETERS
-    # ========================================================
 
     validate_parameters()
 
     set_random_seeds()
 
-    # ========================================================
-    # SOFTWARE INFORMATION
-    # ========================================================
+    # --------------------------------------------------------
+    # SOFTWARE / GPU
+    # --------------------------------------------------------
 
     log(
         f"DeepLabCut version: "
@@ -525,16 +540,19 @@ def main():
     )
 
     log(
-        f"PyTorch version:    "
-        f"{torch.__version__}"
+        f"PyTorch version:    {torch.__version__}"
     )
 
     log(
-        f"CUDA available:     "
-        f"{torch.cuda.is_available()}"
+        f"CUDA available:     {torch.cuda.is_available()}"
     )
 
-    if torch.cuda.is_available():
+    if DEVICE.startswith("cuda"):
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                f"DEVICE={DEVICE}, but CUDA is unavailable."
+            )
 
         log(
             f"GPU:                "
@@ -542,121 +560,34 @@ def main():
         )
 
         log(
-            f"CUDA runtime:       "
-            f"{torch.version.cuda}"
+            f"CUDA runtime:       {torch.version.cuda}"
         )
 
-    log()
-
-    # ========================================================
-    # GPU CHECK
-    # ========================================================
-
-    if DEVICE.lower().startswith(
-        "cuda"
-    ):
-
-        if not torch.cuda.is_available():
-
-            raise RuntimeError(
-                f"DEVICE={DEVICE}, but CUDA is not "
-                "available inside the container."
-            )
-
-    # ========================================================
-    # PRINT PARAMETERS
-    # ========================================================
-
-    log(
-        "Pennsieve training parameters:"
-    )
-
-    log(
-        f"  NET_TYPE            = {NET_TYPE}"
-    )
-
-    log(
-        f"  EPOCHS              = {EPOCHS}"
-    )
-
-    log(
-        f"  BATCH_SIZE          = {BATCH_SIZE}"
-    )
-
-    log(
-        f"  SAVE_EPOCHS         = {SAVE_EPOCHS}"
-    )
-
-    log(
-        f"  MAX_SNAPSHOTS       = {MAX_SNAPSHOTS}"
-    )
-
-    log(
-        f"  DISPLAY_ITERS       = {DISPLAY_ITERS}"
-    )
-
-    log(
-        f"  SHUFFLE             = {SHUFFLE}"
-    )
-
-    log(
-        f"  TRAININGSET_INDEX   = {TRAININGSET_INDEX}"
-    )
-
-    log(
-        f"  TRAIN_FRACTION      = {TRAIN_FRACTION}"
-    )
-
-    log(
-        f"  DEVICE              = {DEVICE}"
-    )
-
-    log(
-        f"  SEED                = {SEED}"
-    )
-
-    log(
-        f"  LEARNING_RATE       = {LEARNING_RATE}"
-    )
-
-    log(
-        f"  WEIGHT_DECAY        = {WEIGHT_DECAY}"
-    )
-
-    log(
-        f"  DETECTOR_TYPE       = {DETECTOR_TYPE}"
-    )
-
-    log(
-        f"  DETECTOR_BATCH_SIZE = "
-        f"{DETECTOR_BATCH_SIZE}"
-    )
-
-    log(
-        f"  DETECTOR_EPOCHS     = "
-        f"{DETECTOR_EPOCHS}"
-    )
-
-    log(
-        f"  DETECTOR_SAVE_EPOCHS = "
-        f"{DETECTOR_SAVE_EPOCHS}"
-    )
+    # --------------------------------------------------------
+    # PARAMETERS
+    # --------------------------------------------------------
 
     log()
-
-    log(
-        f"INPUT_DIR  = {INPUT_DIR}"
-    )
-
-    log(
-        f"OUTPUT_DIR = {OUTPUT_DIR}"
-    )
+    log("Training parameters:")
+    log(f"  NET_TYPE       = {NET_TYPE}")
+    log(f"  EPOCHS         = {EPOCHS}")
+    log(f"  BATCH_SIZE     = {BATCH_SIZE}")
+    log(f"  SAVE_EPOCHS    = {SAVE_EPOCHS}")
+    log(f"  MAX_SNAPSHOTS  = {MAX_SNAPSHOTS}")
+    log(f"  DISPLAY_ITERS  = {DISPLAY_ITERS}")
+    log(f"  SHUFFLE        = {SHUFFLE}")
+    log(f"  DEVICE         = {DEVICE}")
+    log(f"  SEED           = {SEED}")
+    log(f"  LEARNING_RATE  = {LEARNING_RATE}")
+    log(f"  WEIGHT_DECAY   = {WEIGHT_DECAY}")
 
     log()
+    log(f"INPUT_DIR  = {INPUT_DIR}")
+    log(f"OUTPUT_DIR = {OUTPUT_DIR}")
 
-    # ========================================================
-    # LOCATE DLC PROJECT
-    # ========================================================
+    # --------------------------------------------------------
+    # FIND INPUT PROJECT
+    # --------------------------------------------------------
 
     source_config = find_config(
         INPUT_DIR
@@ -666,19 +597,13 @@ def main():
         source_config.parent
     )
 
-    log(
-        "Input DLC project:"
-    )
-
-    log(
-        str(source_project)
-    )
-
     log()
+    log("Input DLC project:")
+    log(str(source_project))
 
-    # ========================================================
-    # COPY PROJECT INTO OUTPUT
-    # ========================================================
+    # --------------------------------------------------------
+    # COPY PROJECT TO WRITABLE OUTPUT LOCATION
+    # --------------------------------------------------------
 
     OUTPUT_DIR.mkdir(
         parents=True,
@@ -691,11 +616,11 @@ def main():
     )
 
     if output_project.exists():
-
         shutil.rmtree(
             output_project
         )
 
+    log()
     log(
         "Copying DLC project to OUTPUT_DIR..."
     )
@@ -710,36 +635,61 @@ def main():
         / "config.yaml"
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # UPDATE DLC CONFIG
-    # ========================================================
+    # --------------------------------------------------------
 
     cfg = auxiliaryfunctions.read_config(
         str(config_path)
     )
 
-    # DLC must know the actual container path.
-    cfg[
-        "project_path"
-    ] = str(
+    cfg["project_path"] = str(
         output_project
     )
 
-    # Force PyTorch DLC.
-    cfg[
-        "engine"
-    ] = "pytorch"
+    cfg["engine"] = "pytorch"
 
-    # Set current architecture.
-    cfg[
-        "default_net_type"
-    ] = NET_TYPE
+    cfg["default_net_type"] = (
+        NET_TYPE
+    )
 
-    # Control DLC's internal train/test split.
-    cfg[
-        "TrainingFraction"
-    ] = [
-        TRAIN_FRACTION
+    auxiliaryfunctions.write_config(
+        str(config_path),
+        cfg
+    )
+
+    validate_labeled_data(
+        config_path
+    )
+
+    # --------------------------------------------------------
+    # BUILD PREDEFINED TRAIN / VAL INDICES
+    # --------------------------------------------------------
+
+    (
+        train_indices,
+        val_indices,
+        fixed_fraction,
+    ) = build_fixed_split(
+        config_path
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # DLC internally requires a TrainingFraction entry to
+    # identify/name the training dataset.
+    #
+    # This value is DERIVED from the existing EMBER split.
+    # It is NOT used to randomly split anything.
+    # --------------------------------------------------------
+
+    cfg = auxiliaryfunctions.read_config(
+        str(config_path)
+    )
+
+    cfg["TrainingFraction"] = [
+        fixed_fraction
     ]
 
     auxiliaryfunctions.write_config(
@@ -747,245 +697,170 @@ def main():
         cfg
     )
 
-    cfg = validate_project(
-        config_path
-    )
-
     log()
+    log(
+        f"DLC internal split metadata fraction: "
+        f"{fixed_fraction:.2f}"
+    )
 
     log(
-        f"Multi-animal project: "
-        f"{cfg.get('multianimalproject', False)}"
+        "(derived automatically; not a hyperparameter)"
     )
 
-    if cfg.get(
-        "multianimalproject",
-        False
-    ):
-
-        log(
-            f"Individuals: "
-            f"{cfg.get('individuals', [])}"
-        )
-
-        log(
-            f"Multi-animal bodyparts: "
-            f"{cfg.get('multianimalbodyparts', [])}"
-        )
-
-        log(
-            f"Identity learning: "
-            f"{cfg.get('identity', False)}"
-        )
-
-    else:
-
-        log(
-            f"Bodyparts: "
-            f"{cfg.get('bodyparts', [])}"
-        )
-
-    log()
-
-    # ========================================================
-    # RECORD RUN
-    # ========================================================
+    # --------------------------------------------------------
+    # SAVE RUN INFO
+    # --------------------------------------------------------
 
     write_run_info(
-        "starting"
+        "starting",
+        {
+            "train_images":
+                len(train_indices),
+            "validation_images":
+                len(val_indices),
+            "derived_dlc_fraction":
+                fixed_fraction,
+        }
     )
 
-    # ========================================================
-    # CREATE TRAINING DATASET
-    # ========================================================
+    # --------------------------------------------------------
+    # CREATE DLC TRAINING DATASET USING FIXED INDICES
+    # --------------------------------------------------------
 
+    log()
     log(
         "=============================================="
     )
-
     log(
-        "Creating DeepLabCut PyTorch training dataset"
+        "Creating DLC dataset from fixed EMBER split"
     )
-
     log(
         "=============================================="
     )
-
-    create_kwargs = {
-        "config":
-            str(config_path),
-
-        "Shuffles":
-            [SHUFFLE],
-
-        "net_type":
-            NET_TYPE,
-
-        "engine":
-            Engine.PYTORCH,
-
-        "userfeedback":
-            False,
-    }
-
-    # Detector selection matters only for detector-based
-    # / top-down models.
-    if DETECTOR_TYPE is not None:
-
-        create_kwargs[
-            "detector_type"
-        ] = DETECTOR_TYPE
 
     deeplabcut.create_training_dataset(
-        **create_kwargs
+        str(config_path),
+
+        Shuffles=[
+            SHUFFLE
+        ],
+
+        # One explicitly frozen split
+        trainIndices=[
+            train_indices
+        ],
+
+        testIndices=[
+            val_indices
+        ],
+
+        net_type=NET_TYPE,
+
+        engine=Engine.PYTORCH,
+
+        userfeedback=False,
     )
 
     log()
-
     log(
-        "Training dataset created successfully."
+        "DLC training dataset created successfully."
     )
 
-    log()
-
-    # ========================================================
-    # OPTIONAL PYTORCH CONFIG OVERRIDES
-    # ========================================================
+    # --------------------------------------------------------
+    # OPTIONAL OPTIMIZER OVERRIDES
+    # --------------------------------------------------------
 
     pytorch_updates = (
         build_pytorch_updates()
     )
 
-    if pytorch_updates is not None:
+    # --------------------------------------------------------
+    # TRAIN
+    # --------------------------------------------------------
 
-        log(
-            "PyTorch configuration overrides:"
-        )
+    write_run_info(
+        "training",
+        {
+            "train_images":
+                len(train_indices),
+            "validation_images":
+                len(val_indices),
+            "derived_dlc_fraction":
+                fixed_fraction,
+        }
+    )
 
-        for key, value in (
-            pytorch_updates.items()
-        ):
-
-            log(
-                f"  {key} = {value}"
-            )
-
-        log()
-
-    # ========================================================
-    # TRAIN POSE MODEL
-    # ========================================================
-
+    log()
     log(
         "=============================================="
     )
-
     log(
         "Starting DeepLabCut training"
     )
-
     log(
         "=============================================="
     )
 
-    write_run_info(
-        "training"
-    )
+    deeplabcut.train_network(
+        str(config_path),
 
-    train_kwargs = {
-        "config":
-            str(config_path),
+        shuffle=SHUFFLE,
 
-        "shuffle":
-            SHUFFLE,
+        # There is exactly one internally registered
+        # fixed EMBER split.
+        trainingsetindex=0,
 
-        "trainingsetindex":
-            TRAININGSET_INDEX,
+        device=DEVICE,
 
-        "device":
-            DEVICE,
+        epochs=EPOCHS,
 
-        "epochs":
-            EPOCHS,
+        batch_size=BATCH_SIZE,
 
-        "batch_size":
-            BATCH_SIZE,
+        save_epochs=SAVE_EPOCHS,
 
-        "save_epochs":
-            SAVE_EPOCHS,
-
-        "max_snapshots_to_keep":
+        max_snapshots_to_keep=
             MAX_SNAPSHOTS,
 
-        "displayiters":
-            DISPLAY_ITERS,
-    }
+        display_iters=DISPLAY_ITERS,
 
-    # Optional detector overrides for top-down architectures.
-    if DETECTOR_BATCH_SIZE is not None:
-
-        train_kwargs[
-            "detector_batch_size"
-        ] = DETECTOR_BATCH_SIZE
-
-    if DETECTOR_EPOCHS is not None:
-
-        train_kwargs[
-            "detector_epochs"
-        ] = DETECTOR_EPOCHS
-
-    if DETECTOR_SAVE_EPOCHS is not None:
-
-        train_kwargs[
-            "detector_save_epochs"
-        ] = DETECTOR_SAVE_EPOCHS
-
-    if pytorch_updates is not None:
-
-        train_kwargs[
-            "pytorch_cfg_updates"
-        ] = pytorch_updates
-
-    deeplabcut.train_network(
-        **train_kwargs
+        pytorch_cfg_updates=
+            pytorch_updates,
     )
 
-    # ========================================================
-    # FINISH
-    # ========================================================
+    # --------------------------------------------------------
+    # FINISHED
+    # --------------------------------------------------------
 
     write_run_info(
         "completed",
         {
             "finished":
                 datetime.now().isoformat(),
+            "train_images":
+                len(train_indices),
+            "validation_images":
+                len(val_indices),
+            "derived_dlc_fraction":
+                fixed_fraction,
             "output_project":
                 str(output_project),
         }
     )
 
     log()
-
     log(
         "=============================================="
     )
-
     log(
         "DEEPLABCUT TRAINING COMPLETE"
     )
-
     log(
         "=============================================="
     )
 
     log()
-
     log(
-        "Output DLC project:"
-    )
-
-    log(
-        str(output_project)
+        f"Output project: {output_project}"
     )
 
 
@@ -1002,8 +877,7 @@ if __name__ == "__main__":
     except Exception as exc:
 
         print(
-            "\n"
-            "==============================================",
+            "\n==============================================",
             file=sys.stderr
         )
 
@@ -1024,15 +898,13 @@ if __name__ == "__main__":
             write_run_info(
                 "failed",
                 {
-                    "error":
-                        str(exc),
+                    "error": str(exc),
                     "failed":
                         datetime.now().isoformat(),
                 }
             )
 
         except Exception:
-
             pass
 
         sys.exit(1)
