@@ -10,7 +10,7 @@ application:
   type: processor
 
   maintainers:
-    - name: kk7798
+    - name: Keyvan Ansarino
 
   tags:
     - DeepLabCut
