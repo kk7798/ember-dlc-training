@@ -1,4 +1,5 @@
-
+import os
+from pathlib import Path
 
 # Configure writable caches BEFORE importing third-party libraries.
 cache_root = (
@@ -19,13 +20,11 @@ for variable, directory in cache_paths.items():
     os.environ[variable] = str(directory)
 
 import json
-import os
 import random
 import shutil
 import sys
 import traceback
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import torch
