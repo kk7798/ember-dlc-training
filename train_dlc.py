@@ -1,3 +1,21 @@
+# Configure writable caches BEFORE importing third-party libraries.
+cache_root = (
+    Path(os.environ.get("OUTPUT_DIR", "/output")).resolve()
+    / ".cache"
+)
+
+cache_paths = {
+    "XDG_CACHE_HOME": cache_root,
+    "TORCH_HOME": cache_root / "torch",
+    "HF_HOME": cache_root / "huggingface",
+    "HF_HUB_CACHE": cache_root / "huggingface" / "hub",
+    "MPLCONFIGDIR": cache_root / "matplotlib",
+}
+
+for variable, directory in cache_paths.items():
+    directory.mkdir(parents=True, exist_ok=True)
+    os.environ[variable] = str(directory)
+
 import json
 import os
 import random
