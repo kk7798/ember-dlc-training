@@ -23,38 +23,31 @@ resources:
 parameters:
   - name: NET_TYPE
     type: string
-    default: hrnet_w32
+    defaultValue: "hrnet_w32"
   - name: EPOCHS
     type: number
-    default: 200
-    min: 1
+    defaultValue: "200"
   - name: BATCH_SIZE
     type: number
-    default: 2
-    min: 1
+    defaultValue: "2"
   - name: SAVE_EPOCHS
     type: number
-    default: 10
-    min: 1
+    defaultValue: "10"
   - name: MAX_SNAPSHOTS
     type: number
-    default: 5
+    defaultValue: "5"
   - name: DISPLAY_ITERS
     type: number
-    default: 100
+    defaultValue: "100"
   - name: SHUFFLE
     type: number
-    default: 1
+    defaultValue: "1"
   - name: DEVICE
     type: string
-    default: cuda:0
+    defaultValue: "cuda:0"
   - name: SEED
     type: number
-    default: 42
-  - name: LEARNING_RATE
-    type: string
-  - name: WEIGHT_DECAY
-    type: string
+    defaultValue: "42"
 inputs:
   - name: dlc_project
     dataType: any
