@@ -1,6 +1,15 @@
 import os
 from pathlib import Path
 
+from processor_utils import ensure_separate_output, prepare_output
+
+# Validate mount layout before creating caches or outputs.
+ensure_separate_output(
+    os.environ.get("OUTPUT_DIR", "/output"),
+    os.environ.get("INPUT_DIR", "/input"),
+)
+prepare_output(Path(os.environ.get("OUTPUT_DIR", "/output")), allow_cache=True)
+
 # Configure writable caches BEFORE importing third-party libraries.
 cache_root = (
     Path(os.environ.get("OUTPUT_DIR", "/output")).resolve()
@@ -635,9 +644,7 @@ def main():
     )
 
     if output_project.exists():
-        shutil.rmtree(
-            output_project
-        )
+        raise FileExistsError(f"Refusing to overwrite existing project: {output_project}")
 
     log()
     log(
