@@ -48,6 +48,9 @@ parameters:
   - name: SEED
     type: number
     defaultValue: "42"
+  - name: PROJECT_SUBDIR
+    type: string
+    defaultValue: "."
 inputs:
   - name: dlc_project
     dataType: any
