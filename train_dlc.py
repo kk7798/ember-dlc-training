@@ -221,6 +221,13 @@ def set_random_seeds():
 
 def find_config(root):
 
+    # Select the source project when the Dandiset also contains previous results.
+    subdir = env_str("PROJECT_SUBDIR", ".")
+    selected = (root / subdir).resolve()
+    if selected != root.resolve() and root.resolve() not in selected.parents:
+        raise ValueError("PROJECT_SUBDIR must stay inside INPUT_DIR.")
+    root = selected
+
     configs = list(
         root.rglob("config.yaml")
     )
