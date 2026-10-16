@@ -1,13 +1,31 @@
+print("[startup] EMBER training Python process started", flush=True)
+
+import faulthandler
+import sys
+import time
+
+_startup_time = time.monotonic()
+
+def startup_log(message):
+    print(f"[startup +{time.monotonic() - _startup_time:.1f}s] {message}", flush=True)
+
+faulthandler.enable(file=sys.stderr)
+# Periodic stacks continue throughout the run to diagnose stalls, not just imports.
+faulthandler.dump_traceback_later(120, repeat=True, file=sys.stderr)
+startup_log("Loading standard-library and filesystem helpers")
+
 import os
 from pathlib import Path
 
 from processor_utils import ensure_separate_output, prepare_output
 
 # Validate mount layout before creating caches or outputs.
+startup_log("Checking input/output separation")
 ensure_separate_output(
     os.environ.get("OUTPUT_DIR", "/output"),
     os.environ.get("INPUT_DIR", "/input"),
 )
+startup_log("Checking output directory contents and writability")
 prepare_output(Path(os.environ.get("OUTPUT_DIR", "/output")), allow_cache=True)
 
 # Configure writable caches BEFORE importing third-party libraries.
@@ -25,6 +43,7 @@ cache_paths = {
 }
 
 for variable, directory in cache_paths.items():
+    startup_log(f"Preparing {variable}: {directory}")
     directory.mkdir(parents=True, exist_ok=True)
     os.environ[variable] = str(directory)
 
@@ -35,9 +54,13 @@ import sys
 import traceback
 from datetime import datetime
 
+startup_log("Importing NumPy")
 import numpy as np
+startup_log("Importing PyTorch")
 import torch
+startup_log("Importing DeepLabCut")
 import deeplabcut
+startup_log("Importing DeepLabCut training utilities")
 
 from deeplabcut.core.engine import Engine
 from deeplabcut.pose_estimation_pytorch import available_models
@@ -46,6 +69,8 @@ from deeplabcut.utils import auxiliaryfunctions
 from deeplabcut.generate_training_dataset.trainingsetmanipulation import (
     merge_annotateddatasets,
 )
+
+startup_log("Imports complete; reading parameters")
 
 
 # ============================================================
@@ -561,8 +586,10 @@ def main():
     )
     log()
 
+    log("Validating parameters...")
     validate_parameters()
 
+    log("Setting random seeds and initializing CUDA if available...")
     set_random_seeds()
 
     # --------------------------------------------------------
@@ -624,6 +651,7 @@ def main():
     # FIND INPUT PROJECT
     # --------------------------------------------------------
 
+    log("Searching for the selected input project...")
     source_config = find_config(
         INPUT_DIR
     )
@@ -691,6 +719,7 @@ def main():
         cfg
     )
 
+    log("Validating annotation files...")
     validate_labeled_data(
         config_path
     )
@@ -699,6 +728,7 @@ def main():
     # BUILD PREDEFINED TRAIN / VAL INDICES
     # --------------------------------------------------------
 
+    log("Merging annotations and building the fixed split...")
     (
         train_indices,
         val_indices,
