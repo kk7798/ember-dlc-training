@@ -3,4 +3,5 @@ FROM ${DLC_BASE_IMAGE}
 ENV PYTHONUNBUFFERED=1 MPLBACKEND=Agg
 WORKDIR /app
 COPY train_dlc.py processor_utils.py /app/
-ENTRYPOINT ["python", "/app/train_dlc.py"]
+COPY entrypoint.sh /app/entrypoint.sh
+ENTRYPOINT ["sh", "/app/entrypoint.sh"]
