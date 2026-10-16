@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 
 from processor_utils import ensure_separate_output, prepare_output
+from early_stopping import early_stopping, LossMonitor
 
 # Validate mount layout before creating caches or outputs.
 startup_log("Checking input/output separation")
@@ -86,6 +87,15 @@ def env_str(name, default):
     return value.strip()
 
 
+def env_bool(name, default):
+    value = env_str(name, str(default)).lower()
+    if value in {"true", "1", "yes"}:
+        return True
+    if value in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"{name} must be true or false.")
+
+
 def env_int(name, default):
     value = os.environ.get(name)
 
@@ -107,6 +117,10 @@ def env_optional_float(name):
 # ============================================================
 # PENNSIEVE-CONTROLLED PARAMETERS
 # ============================================================
+
+EARLY_STOPPING = env_bool("EARLY_STOPPING", True)
+PATIENCE = env_int("PATIENCE", 10)
+MIN_DELTA = float(env_str("MIN_DELTA", "0.0001"))
 
 NET_TYPE = env_str(
     "NET_TYPE",
@@ -195,6 +209,9 @@ def log(message=""):
 # ============================================================
 
 def validate_parameters():
+
+    if EARLY_STOPPING:
+        LossMonitor(PATIENCE, MIN_DELTA)
 
     if EPOCHS <= 0:
         raise ValueError("EPOCHS must be > 0.")
@@ -506,6 +523,9 @@ def write_run_info(
         "torch_version": torch.__version__,
         "net_type": NET_TYPE,
         "epochs": EPOCHS,
+        "early_stopping": EARLY_STOPPING,
+        "patience": PATIENCE,
+        "min_delta": MIN_DELTA,
         "batch_size": BATCH_SIZE,
         "save_epochs": SAVE_EPOCHS,
         "max_snapshots": MAX_SNAPSHOTS,
@@ -633,6 +653,9 @@ def main():
     log("Training parameters:")
     log(f"  NET_TYPE       = {NET_TYPE}")
     log(f"  EPOCHS         = {EPOCHS}")
+    log(f"  EARLY_STOPPING = {EARLY_STOPPING}")
+    log(f"  PATIENCE       = {PATIENCE}")
+    log(f"  MIN_DELTA      = {MIN_DELTA}")
     log(f"  BATCH_SIZE     = {BATCH_SIZE}")
     log(f"  SAVE_EPOCHS    = {SAVE_EPOCHS}")
     log(f"  MAX_SNAPSHOTS  = {MAX_SNAPSHOTS}")
@@ -864,31 +887,32 @@ def main():
         "=============================================="
     )
 
-    deeplabcut.train_network(
-        str(config_path),
+    with early_stopping(EARLY_STOPPING, PATIENCE, MIN_DELTA, output_project):
+        deeplabcut.train_network(
+            str(config_path),
 
-        shuffle=SHUFFLE,
+            shuffle=SHUFFLE,
 
-        # There is exactly one internally registered
-        # fixed EMBER split.
-        trainingsetindex=0,
+            # There is exactly one internally registered
+            # fixed EMBER split.
+            trainingsetindex=0,
 
-        device=DEVICE,
+            device=DEVICE,
 
-        epochs=EPOCHS,
+            epochs=EPOCHS,
 
-        batch_size=BATCH_SIZE,
+            batch_size=BATCH_SIZE,
 
-        save_epochs=SAVE_EPOCHS,
+            save_epochs=SAVE_EPOCHS,
 
-        max_snapshots_to_keep=
-            MAX_SNAPSHOTS,
+            max_snapshots_to_keep=
+                MAX_SNAPSHOTS,
 
-        display_iters=DISPLAY_ITERS,
+            display_iters=DISPLAY_ITERS,
 
-        pytorch_cfg_updates=
-            pytorch_updates,
-    )
+            pytorch_cfg_updates=
+                pytorch_updates,
+        )
 
     # --------------------------------------------------------
     # FINISHED

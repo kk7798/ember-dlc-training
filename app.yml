@@ -21,6 +21,15 @@ resources:
   cpu: 4096
   memory: 16384
 parameters:
+  - name: EARLY_STOPPING
+    type: string
+    defaultValue: "true"
+  - name: PATIENCE
+    type: number
+    defaultValue: "10"
+  - name: MIN_DELTA
+    type: number
+    defaultValue: "0.0001"
   - name: NET_TYPE
     type: string
     defaultValue: "hrnet_w32"
